@@ -227,7 +227,7 @@ class SoundStreamTrainer(nn.Module):
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(parents = True, exist_ok = True)
-        self.checkpoint_filepath = self.results_folder / f'checkpoint'
+        self.checkpoint_filepath = self.results_folder / f'checkpoint.soundstream'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("soundstream", config=hps)
@@ -544,7 +544,7 @@ class SemanticTransformerTrainer(nn.Module):
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(parents = True, exist_ok = True)
-        self.checkpoint_filepath = self.results_folder / f'checkpoint'
+        self.checkpoint_filepath = self.results_folder / f'checkpoint.semantic.transformer'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("semantic", config=hps)
@@ -789,7 +789,7 @@ class CoarseTransformerTrainer(nn.Module):
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(parents = True, exist_ok = True)
-        self.checkpoint_filepath = self.results_folder / f'checkpoint'
+        self.checkpoint_filepath = self.results_folder / f'checkpoint.coarse.transformer'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("coarse", config=hps)
@@ -1029,7 +1029,7 @@ class FineTransformerTrainer(nn.Module):
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(parents = True, exist_ok = True)
-        self.checkpoint_filepath = self.results_folder / f'checkpoint'
+        self.checkpoint_filepath = self.results_folder / f'checkpoint.fine.transformer'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("fine", config=hps)
