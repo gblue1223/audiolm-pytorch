@@ -84,6 +84,10 @@ def accum_log(log, new_logs):
         log[key] = old_value + new_value
     return log
 
+def try_clean_folder(results_folder):
+    if len([*results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
+        rmtree(str(results_folder))
+
 # auto data to module keyword argument routing functions
 
 def has_duplicates(tup):
@@ -226,15 +230,16 @@ class SoundStreamTrainer(nn.Module):
         self.checkpoint_filepath = self.results_folder / f'checkpoint'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
-        self.accelerator.init_trackers("soundstream", config=hps)        
+        self.accelerator.init_trackers("soundstream", config=hps)
 
         if load_checkpoint:
             path = Path(self.checkpoint_filepath)
             if path.exists():
                 self.load(self.checkpoint_filepath)
+            else:
+                try_clean_folder(self.results_folder)
         else:
-            if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
-                rmtree(str(self.results_folder))
+            try_clean_folder(self.results_folder)
 
     def save(self, path):
         pkg = dict(
@@ -535,12 +540,12 @@ class SemanticTransformerTrainer(nn.Module):
         self.valid_dl_iter = cycle(self.valid_dl)
 
         self.save_model_every = save_model_every
-        self.save_results_every = save_results_every    
+        self.save_results_every = save_results_every
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(parents = True, exist_ok = True)
         self.checkpoint_filepath = self.results_folder / f'checkpoint'
-        
+
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("semantic", config=hps)
 
@@ -548,9 +553,10 @@ class SemanticTransformerTrainer(nn.Module):
             path = Path(self.checkpoint_filepath)
             if path.exists():
                 self.load(self.checkpoint_filepath)
+            else:
+                try_clean_folder(self.results_folder)
         else:
-            if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
-                rmtree(str(self.results_folder))
+            try_clean_folder(self.results_folder)
 
     def save(self, path):
         pkg = dict(
@@ -779,14 +785,14 @@ class CoarseTransformerTrainer(nn.Module):
         self.valid_dl_iter = cycle(self.valid_dl)
 
         self.save_model_every = save_model_every
-        self.save_results_every = save_results_every    
+        self.save_results_every = save_results_every
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(parents = True, exist_ok = True)
         self.checkpoint_filepath = self.results_folder / f'checkpoint'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
-        self.accelerator.init_trackers("coarse", config=hps)        
+        self.accelerator.init_trackers("coarse", config=hps)
 
         self.train_wrapper.to(self.device)
 
@@ -794,9 +800,10 @@ class CoarseTransformerTrainer(nn.Module):
             path = Path(self.checkpoint_filepath)
             if path.exists():
                 self.load(self.checkpoint_filepath)
+            else:
+                try_clean_folder(self.results_folder)
         else:
-            if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
-                rmtree(str(self.results_folder))
+            try_clean_folder(self.results_folder)
 
     def save(self, path):
         pkg = dict(
@@ -1018,14 +1025,14 @@ class FineTransformerTrainer(nn.Module):
         self.valid_dl_iter = cycle(self.valid_dl)
 
         self.save_model_every = save_model_every
-        self.save_results_every = save_results_every    
+        self.save_results_every = save_results_every
 
         self.results_folder = Path(results_folder)
         self.results_folder.mkdir(parents = True, exist_ok = True)
         self.checkpoint_filepath = self.results_folder / f'checkpoint'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
-        self.accelerator.init_trackers("fine", config=hps)        
+        self.accelerator.init_trackers("fine", config=hps)
 
         self.train_wrapper.to(self.device)
 
@@ -1033,9 +1040,10 @@ class FineTransformerTrainer(nn.Module):
             path = Path(self.checkpoint_filepath)
             if path.exists():
                 self.load(self.checkpoint_filepath)
+            else:
+                try_clean_folder(self.results_folder)
         else:
-            if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
-                rmtree(str(self.results_folder))
+            try_clean_folder(self.results_folder)
 
     def save(self, path):
         pkg = dict(
