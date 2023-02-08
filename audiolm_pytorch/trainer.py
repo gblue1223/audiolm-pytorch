@@ -2,7 +2,7 @@ from math import sqrt
 import copy
 from random import choice
 from pathlib import Path
-from shutil import rmtree
+import os
 
 from beartype.typing import Union, List, Optional, Tuple
 from typing_extensions import Annotated
@@ -84,9 +84,12 @@ def accum_log(log, new_logs):
         log[key] = old_value + new_value
     return log
 
-def try_clean_folder(results_folder):
-    if len([*results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
-        rmtree(str(results_folder))
+def try_clear_checkpoints(results_folder, prefix):
+    files = [*results_folder.glob(f'{prefix}*')]
+    if len(files) > 0 and yes_or_no(
+            f'do you want to clear previous experiment checkpoints and results?\n"{prefix}*" files will be deleted'):
+        for f in files:
+            os.remove(f)
 
 # auto data to module keyword argument routing functions
 
@@ -237,9 +240,9 @@ class SoundStreamTrainer(nn.Module):
             if path.exists():
                 self.load(self.checkpoint_filepath)
             else:
-                try_clean_folder(self.results_folder)
+                try_clear_checkpoints(self.results_folder, 'soundstream')
         else:
-            try_clean_folder(self.results_folder)
+            try_clear_checkpoints(self.results_folder, 'soundstream')
 
     def save(self, path):
         pkg = dict(
@@ -255,6 +258,9 @@ class SoundStreamTrainer(nn.Module):
             pkg[key] = discr_optim.state_dict()
 
         torch.save(pkg, path)
+
+        steps = int(self.steps.item())
+        self.print(f'checkpoint saved. (steps:{steps})')
 
     @property
     def unwrapped_soundstream(self):
@@ -274,6 +280,9 @@ class SoundStreamTrainer(nn.Module):
         for key, _ in self.multiscale_discriminator_iter():
             discr_optim = getattr(self, key)
             discr_optim.load_state_dict(pkg[key])
+
+        steps = int(self.steps.item())
+        self.print(f'checkpoint loaded. (steps:{steps})')
 
     def multiscale_discriminator_iter(self):
         for ind, discr in enumerate(self.unwrapped_soundstream.discriminators):
@@ -432,6 +441,7 @@ class SoundStreamTrainer(nn.Module):
             logs = self.train_step()
             log_fn(logs)
 
+        self.save(self.checkpoint_filepath)
         self.print('training complete')
 
 # semantic transformer trainer
@@ -554,9 +564,9 @@ class SemanticTransformerTrainer(nn.Module):
             if path.exists():
                 self.load(self.checkpoint_filepath)
             else:
-                try_clean_folder(self.results_folder)
+                try_clear_checkpoints(self.results_folder, 'semantic.transformer')
         else:
-            try_clean_folder(self.results_folder)
+            try_clear_checkpoints(self.results_folder, 'semantic.transformer')
 
     def save(self, path):
         pkg = dict(
@@ -565,6 +575,9 @@ class SemanticTransformerTrainer(nn.Module):
             optim = self.optim.state_dict()
         )
         torch.save(pkg, path)
+
+        steps = int(self.steps.item())
+        self.print(f'checkpoint saved. (steps:{steps})')
 
     def load(self, path):
         path = Path(path)
@@ -575,6 +588,9 @@ class SemanticTransformerTrainer(nn.Module):
         transformer = self.accelerator.unwrap_model(self.transformer)
         transformer.load_state_dict(pkg['model'])
         self.optim.load_state_dict(pkg['optim'])
+
+        steps = int(self.steps.item())
+        self.print(f'checkpoint loaded. (steps:{steps})')
 
     def print(self, msg):
         self.accelerator.print(msg)
@@ -669,6 +685,7 @@ class SemanticTransformerTrainer(nn.Module):
             logs = self.train_step()
             log_fn(logs)
 
+        self.save(self.checkpoint_filepath)
         self.print('training complete')
 
 # fine transformer trainer
@@ -801,9 +818,9 @@ class CoarseTransformerTrainer(nn.Module):
             if path.exists():
                 self.load(self.checkpoint_filepath)
             else:
-                try_clean_folder(self.results_folder)
+                try_clear_checkpoints(self.results_folder, 'coarse.transformer')
         else:
-            try_clean_folder(self.results_folder)
+            try_clear_checkpoints(self.results_folder, 'coarse.transformer')
 
     def save(self, path):
         pkg = dict(
@@ -812,6 +829,9 @@ class CoarseTransformerTrainer(nn.Module):
             optim = self.optim.state_dict()
         )
         torch.save(pkg, path)
+
+        steps = int(self.steps.item())
+        self.print(f'checkpoint saved. (steps:{steps})')
 
     def load(self, path):
         path = Path(path)
@@ -822,6 +842,9 @@ class CoarseTransformerTrainer(nn.Module):
         transformer = self.accelerator.unwrap_model(self.transformer)
         transformer.load_state_dict(pkg['model'])
         self.optim.load_state_dict(pkg['optim'])
+
+        steps = int(self.steps.item())
+        self.print(f'checkpoint loaded. (steps:{steps})')
 
     def print(self, msg):
         self.accelerator.print(msg)
@@ -916,6 +939,7 @@ class CoarseTransformerTrainer(nn.Module):
             logs = self.train_step()
             log_fn(logs)
 
+        self.save(self.checkpoint_filepath)
         self.print('training complete')
 
 # fine transformer trainer
@@ -1041,9 +1065,9 @@ class FineTransformerTrainer(nn.Module):
             if path.exists():
                 self.load(self.checkpoint_filepath)
             else:
-                try_clean_folder(self.results_folder)
+                try_clear_checkpoints(self.results_folder, 'fine.transformer')
         else:
-            try_clean_folder(self.results_folder)
+            try_clear_checkpoints(self.results_folder, 'fine.transformer')
 
     def save(self, path):
         pkg = dict(
@@ -1052,6 +1076,9 @@ class FineTransformerTrainer(nn.Module):
             optim = self.optim.state_dict()
         )
         torch.save(pkg, path)
+
+        steps = int(self.steps.item())
+        self.print(f'checkpoint saved. (steps:{steps})')
 
     def load(self, path):
         path = Path(path)
@@ -1062,6 +1089,9 @@ class FineTransformerTrainer(nn.Module):
         transformer = self.accelerator.unwrap_model(self.transformer)
         transformer.load_state_dict(pkg['model'])
         self.optim.load_state_dict(pkg['optim'])
+
+        steps = int(self.steps.item())
+        self.print(f'checkpoint loaded. (steps:{steps})')
 
     def print(self, msg):
         self.accelerator.print(msg)
@@ -1155,4 +1185,5 @@ class FineTransformerTrainer(nn.Module):
             logs = self.train_step()
             log_fn(logs)
 
+        self.save(self.checkpoint_filepath)
         self.print('training complete')
