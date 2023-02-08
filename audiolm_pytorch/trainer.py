@@ -132,7 +132,8 @@ class SoundStreamTrainer(nn.Module):
         ema_update_every = 10,
         apply_grad_penalty_every = 4,
         dl_num_workers = 0,
-        accelerate_kwargs: dict = dict()
+        accelerate_kwargs: dict = dict(),
+        load_checkpoint = True,
     ):
         super().__init__()
         self.accelerator = Accelerator(**accelerate_kwargs)
@@ -221,17 +222,23 @@ class SoundStreamTrainer(nn.Module):
         self.apply_grad_penalty_every = apply_grad_penalty_every
 
         self.results_folder = Path(results_folder)
-
-        if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
-            rmtree(str(self.results_folder))
-
         self.results_folder.mkdir(parents = True, exist_ok = True)
+        self.checkpoint_filepath = self.results_folder / f'checkpoint'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("soundstream", config=hps)        
 
+        if load_checkpoint:
+            path = Path(self.checkpoint_filepath)
+            if path.exists():
+                self.load(self.checkpoint_filepath)
+        else:
+            if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
+                rmtree(str(self.results_folder))
+
     def save(self, path):
         pkg = dict(
+            steps = self.steps,
             model = self.accelerator.get_state_dict(self.soundstream),
             ema_model = self.ema_soundstream.state_dict(),
             optim = self.optim.state_dict(),
@@ -253,8 +260,8 @@ class SoundStreamTrainer(nn.Module):
         assert path.exists()
         pkg = torch.load(str(path))
 
+        self.register_buffer('steps', pkg['steps'])
         self.unwrapped_soundstream.load_state_dict(pkg['model'])
-
         self.ema_soundstream.load_state_dict(pkg['ema_model'])
         self.optim.load_state_dict(pkg['optim'])
         self.discr_optim.load_state_dict(pkg['discr_optim'])
@@ -408,6 +415,7 @@ class SoundStreamTrainer(nn.Module):
             model_path = str(self.results_folder / f'soundstream.{steps}.ema.pt')
             torch.save(ema_state_dict, model_path)
 
+            self.save(self.checkpoint_filepath)
             self.print(f'{steps}: saving model to {str(self.results_folder)}')
 
         self.steps += 1
@@ -445,7 +453,8 @@ class SemanticTransformerTrainer(nn.Module):
         save_results_every = 100,
         save_model_every = 1000,
         results_folder = './results',
-        accelerate_kwargs: dict = dict()
+        accelerate_kwargs: dict = dict(),
+        load_checkpoint = True,
     ):
         super().__init__()
         self.accelerator = Accelerator(**accelerate_kwargs)
@@ -529,17 +538,23 @@ class SemanticTransformerTrainer(nn.Module):
         self.save_results_every = save_results_every    
 
         self.results_folder = Path(results_folder)
-
-        if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
-            rmtree(str(self.results_folder))
-
         self.results_folder.mkdir(parents = True, exist_ok = True)
+        self.checkpoint_filepath = self.results_folder / f'checkpoint'
         
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("semantic", config=hps)
 
+        if load_checkpoint:
+            path = Path(self.checkpoint_filepath)
+            if path.exists():
+                self.load(self.checkpoint_filepath)
+        else:
+            if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
+                rmtree(str(self.results_folder))
+
     def save(self, path):
         pkg = dict(
+            steps = self.steps,
             model = self.accelerator.get_state_dict(self.transformer),
             optim = self.optim.state_dict()
         )
@@ -550,6 +565,7 @@ class SemanticTransformerTrainer(nn.Module):
         assert path.exists()
         pkg = torch.load(str(path))
 
+        self.register_buffer('steps', pkg['steps'])
         transformer = self.accelerator.unwrap_model(self.transformer)
         transformer.load_state_dict(pkg['model'])
         self.optim.load_state_dict(pkg['optim'])
@@ -635,6 +651,7 @@ class SemanticTransformerTrainer(nn.Module):
             model_path = str(self.results_folder / f'semantic.transformer.{steps}.pt')
             torch.save(state_dict, model_path)
 
+            self.save(self.checkpoint_filepath)
             self.print(f'{steps}: saving model to {str(self.results_folder)}')
 
         self.steps += 1
@@ -674,7 +691,8 @@ class CoarseTransformerTrainer(nn.Module):
         save_results_every = 100,
         save_model_every = 1000,
         results_folder = './results',
-        accelerate_kwargs: dict = dict()
+        accelerate_kwargs: dict = dict(),
+        load_checkpoint = True,
     ):
         super().__init__()
         self.accelerator = Accelerator(**accelerate_kwargs)
@@ -764,19 +782,25 @@ class CoarseTransformerTrainer(nn.Module):
         self.save_results_every = save_results_every    
 
         self.results_folder = Path(results_folder)
-
-        if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
-            rmtree(str(self.results_folder))
-
         self.results_folder.mkdir(parents = True, exist_ok = True)
+        self.checkpoint_filepath = self.results_folder / f'checkpoint'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("coarse", config=hps)        
 
         self.train_wrapper.to(self.device)
 
+        if load_checkpoint:
+            path = Path(self.checkpoint_filepath)
+            if path.exists():
+                self.load(self.checkpoint_filepath)
+        else:
+            if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
+                rmtree(str(self.results_folder))
+
     def save(self, path):
         pkg = dict(
+            steps = self.steps,
             model = self.accelerator.get_state_dict(self.transformer),
             optim = self.optim.state_dict()
         )
@@ -787,9 +811,9 @@ class CoarseTransformerTrainer(nn.Module):
         assert path.exists()
         pkg = torch.load(str(path))
 
+        self.register_buffer('steps', pkg['steps'])
         transformer = self.accelerator.unwrap_model(self.transformer)
         transformer.load_state_dict(pkg['model'])
-
         self.optim.load_state_dict(pkg['optim'])
 
     def print(self, msg):
@@ -870,9 +894,10 @@ class CoarseTransformerTrainer(nn.Module):
 
         if self.is_main and not (steps % self.save_model_every):
             state_dict = self.transformer.state_dict()
-            model_path = str(self.results_folder / f'fine.transformer.{steps}.pt')
+            model_path = str(self.results_folder / f'coarse.transformer.{steps}.pt')
             torch.save(state_dict, model_path)
 
+            self.save(self.checkpoint_filepath)
             self.print(f'{steps}: saving model to {str(self.results_folder)}')
 
         self.steps += 1
@@ -910,7 +935,8 @@ class FineTransformerTrainer(nn.Module):
         save_results_every = 100,
         save_model_every = 1000,
         results_folder = './results',
-        accelerate_kwargs: dict = dict()
+        accelerate_kwargs: dict = dict(),
+        load_checkpoint = True,
     ):
         super().__init__()
         self.accelerator = Accelerator(**accelerate_kwargs)
@@ -995,19 +1021,25 @@ class FineTransformerTrainer(nn.Module):
         self.save_results_every = save_results_every    
 
         self.results_folder = Path(results_folder)
-
-        if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
-            rmtree(str(self.results_folder))
-
         self.results_folder.mkdir(parents = True, exist_ok = True)
+        self.checkpoint_filepath = self.results_folder / f'checkpoint'
 
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("fine", config=hps)        
 
         self.train_wrapper.to(self.device)
 
+        if load_checkpoint:
+            path = Path(self.checkpoint_filepath)
+            if path.exists():
+                self.load(self.checkpoint_filepath)
+        else:
+            if len([*self.results_folder.glob('**/*')]) > 0 and yes_or_no('do you want to clear previous experiment checkpoints and results?'):
+                rmtree(str(self.results_folder))
+
     def save(self, path):
         pkg = dict(
+            steps = self.steps,
             model = self.accelerator.get_state_dict(self.transformer),
             optim = self.optim.state_dict()
         )
@@ -1018,9 +1050,9 @@ class FineTransformerTrainer(nn.Module):
         assert path.exists()
         pkg = torch.load(str(path))
 
+        self.register_buffer('steps', pkg['steps'])
         transformer = self.accelerator.unwrap_model(self.transformer)
         transformer.load_state_dict(pkg['model'])
-
         self.optim.load_state_dict(pkg['optim'])
 
     def print(self, msg):
@@ -1103,6 +1135,7 @@ class FineTransformerTrainer(nn.Module):
             model_path = str(self.results_folder / f'fine.transformer.{steps}.pt')
             torch.save(state_dict, model_path)
 
+            self.save(self.checkpoint_filepath)
             self.print(f'{steps}: saving model to {str(self.results_folder)}')
 
         self.steps += 1
