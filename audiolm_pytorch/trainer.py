@@ -956,6 +956,7 @@ class FineTransformerTrainer(nn.Module):
         audio_conditioner: Optional[AudioConditionerBase] = None,
         dataset: Optional[Dataset] = None,
         data_max_length = None,
+        dataset_normalize = False,
         folder = None,
         lr = 3e-4,
         grad_accum_every = 1,
@@ -1007,7 +1008,8 @@ class FineTransformerTrainer(nn.Module):
                 folder,
                 max_length = data_max_length,
                 target_sample_hz = soundstream.target_sample_hz,
-                seq_len_multiple_of = soundstream.seq_len_multiple_of
+                seq_len_multiple_of = soundstream.seq_len_multiple_of,
+                normalize = dataset_normalize
             )
 
         self.ds_fields = None
