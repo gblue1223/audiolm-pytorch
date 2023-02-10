@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
   name = 'audiolm-pytorch',
   packages = find_packages(exclude=[]),
-  version = '0.11.15',
+  version = '0.11.18',
   license='MIT',
   description = 'AudioLM - Language Modeling Approach to Audio Generation from Google Research - Pytorch',
   author = 'Phil Wang',
@@ -28,7 +28,7 @@ setup(
     'Mega-pytorch',
     'scikit-learn',
     'sentencepiece',
-    'torch>=1.6',
+    'torch>=1.12',
     'torchaudio',
     'transformers',
     'tqdm',
