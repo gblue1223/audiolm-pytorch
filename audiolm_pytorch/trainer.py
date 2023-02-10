@@ -84,10 +84,10 @@ def accum_log(log, new_logs):
         log[key] = old_value + new_value
     return log
 
-def try_clear_checkpoints(results_folder, prefix):
+def try_clear_checkpoints(results_folder, prefix, force_clear_prev_results):
     files = [*results_folder.glob(f'{prefix}*')]
-    if len(files) > 0 and yes_or_no(
-            f'do you want to clear previous experiment checkpoints and results?\n"{prefix}*" files will be deleted'):
+    if len(files) > 0 and (force_clear_prev_results is True or yes_or_no(
+            f'do you want to clear previous experiment checkpoints and results?\n"{prefix}*" files will be deleted')):
         for f in files:
             os.remove(f)
 
@@ -140,6 +140,7 @@ class SoundStreamTrainer(nn.Module):
         apply_grad_penalty_every = 4,
         dl_num_workers = 0,
         accelerate_kwargs: dict = dict(),
+        force_clear_prev_results = None,  # set to True | False to skip the prompt
         load_checkpoint = True,
     ):
         super().__init__()
@@ -240,9 +241,9 @@ class SoundStreamTrainer(nn.Module):
             if path.exists():
                 self.load(self.checkpoint_filepath)
             else:
-                try_clear_checkpoints(self.results_folder, 'soundstream')
+                try_clear_checkpoints(self.results_folder, 'soundstream', force_clear_prev_results)
         else:
-            try_clear_checkpoints(self.results_folder, 'soundstream')
+            try_clear_checkpoints(self.results_folder, 'soundstream', force_clear_prev_results)
 
     def save(self, path):
         pkg = dict(
@@ -469,6 +470,7 @@ class SemanticTransformerTrainer(nn.Module):
         save_model_every = 1000,
         results_folder = './results',
         accelerate_kwargs: dict = dict(),
+        force_clear_prev_results = None,  # set to True | False to skip the prompt
         load_checkpoint = True,
     ):
         super().__init__()
@@ -564,9 +566,9 @@ class SemanticTransformerTrainer(nn.Module):
             if path.exists():
                 self.load(self.checkpoint_filepath)
             else:
-                try_clear_checkpoints(self.results_folder, 'semantic.transformer')
+                try_clear_checkpoints(self.results_folder, 'semantic.transformer', force_clear_prev_results)
         else:
-            try_clear_checkpoints(self.results_folder, 'semantic.transformer')
+            try_clear_checkpoints(self.results_folder, 'semantic.transformer', force_clear_prev_results)
 
     def save(self, path):
         pkg = dict(
@@ -715,6 +717,7 @@ class CoarseTransformerTrainer(nn.Module):
         save_model_every = 1000,
         results_folder = './results',
         accelerate_kwargs: dict = dict(),
+        force_clear_prev_results = None,  # set to True | False to skip the prompt
         load_checkpoint = True,
     ):
         super().__init__()
@@ -818,9 +821,9 @@ class CoarseTransformerTrainer(nn.Module):
             if path.exists():
                 self.load(self.checkpoint_filepath)
             else:
-                try_clear_checkpoints(self.results_folder, 'coarse.transformer')
+                try_clear_checkpoints(self.results_folder, 'coarse.transformer', force_clear_prev_results)
         else:
-            try_clear_checkpoints(self.results_folder, 'coarse.transformer')
+            try_clear_checkpoints(self.results_folder, 'coarse.transformer', force_clear_prev_results)
 
     def save(self, path):
         pkg = dict(
@@ -968,6 +971,7 @@ class FineTransformerTrainer(nn.Module):
         save_model_every = 1000,
         results_folder = './results',
         accelerate_kwargs: dict = dict(),
+        force_clear_prev_results = None,  # set to True | False to skip the prompt
         load_checkpoint = True,
     ):
         super().__init__()
@@ -1066,9 +1070,9 @@ class FineTransformerTrainer(nn.Module):
             if path.exists():
                 self.load(self.checkpoint_filepath)
             else:
-                try_clear_checkpoints(self.results_folder, 'fine.transformer')
+                try_clear_checkpoints(self.results_folder, 'fine.transformer', force_clear_prev_results)
         else:
-            try_clear_checkpoints(self.results_folder, 'fine.transformer')
+            try_clear_checkpoints(self.results_folder, 'fine.transformer', force_clear_prev_results)
 
     def save(self, path):
         pkg = dict(
