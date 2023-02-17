@@ -265,6 +265,11 @@ class SoundStreamTrainer(nn.Module):
             discr_optim = getattr(self, key)
             discr_optim.load_state_dict(pkg[key])
 
+    def load_with_step(self, path, step):
+        path = Path(path)
+        self.register_buffer('steps', torch.Tensor([step]))
+        self.load(path / f'soundstream.{step}.pt')
+
     def multiscale_discriminator_iter(self):
         for ind, discr in enumerate(self.unwrapped_soundstream.discriminators):
             yield f'multiscale_discr_optimizer_{ind}', discr
