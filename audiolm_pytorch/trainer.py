@@ -117,6 +117,7 @@ class SoundStreamTrainer(nn.Module):
         num_train_steps,
         batch_size,
         data_max_length = None,
+        data_max_length_seconds = None,
         folder,
         lr = 2e-4,
         grad_accum_every = 4,
@@ -125,9 +126,11 @@ class SoundStreamTrainer(nn.Module):
         discr_max_grad_norm = None,
         save_results_every = 100,
         save_model_every = 1000,
+        log_losses_every = 1,
         results_folder = './results',
         valid_frac = 0.05,
         random_split_seed = 42,
+        use_ema = True,
         ema_beta = 0.995,
         ema_update_after_step = 500,
         ema_update_every = 10,
@@ -143,7 +146,10 @@ class SoundStreamTrainer(nn.Module):
         self.accelerator = Accelerator(kwargs_handlers = [kwargs], **accelerate_kwargs)
 
         self.soundstream = soundstream
-        self.ema_soundstream = EMA(soundstream, beta = ema_beta, update_after_step = ema_update_after_step, update_every = ema_update_every)
+
+        self.use_ema = use_ema
+        if self.use_ema:
+            self.ema_soundstream = EMA(soundstream, beta = ema_beta, update_after_step = ema_update_after_step, update_every = ema_update_every)
 
         self.register_buffer('steps', torch.Tensor([0]))
 
@@ -167,6 +173,11 @@ class SoundStreamTrainer(nn.Module):
         self.discr_max_grad_norm = discr_max_grad_norm
 
         # create dataset
+
+        assert not (exists(data_max_length) and exists(data_max_length_seconds))
+
+        if exists(data_max_length_seconds):
+            data_max_length = data_max_length_seconds * soundstream.target_sample_hz
 
         self.ds = SoundDataset(
             folder,
@@ -220,6 +231,7 @@ class SoundStreamTrainer(nn.Module):
 
         self.save_model_every = save_model_every
         self.save_results_every = save_results_every
+        self.log_losses_every = log_losses_every
 
         self.apply_grad_penalty_every = apply_grad_penalty_every
 
@@ -233,13 +245,20 @@ class SoundStreamTrainer(nn.Module):
         hps = {"num_train_steps": num_train_steps, "data_max_length": data_max_length, "learning_rate": lr}
         self.accelerator.init_trackers("soundstream", config=hps)        
 
+    def set_model_as_ema_model_(self):
+        """ this will force the main 'online' model to have same parameters as the exponentially moving averaged model """
+        assert self.use_ema
+        self.ema_soundstream.ema_model.load_state_dict(self.soundstream.state_dict())
+
     def save(self, path):
         pkg = dict(
             model = self.accelerator.get_state_dict(self.soundstream),
-            ema_model = self.ema_soundstream.state_dict(),
             optim = self.optim.state_dict(),
             discr_optim = self.discr_optim.state_dict()
         )
+
+        if self.use_ema:
+            pkg['ema_model'] = self.ema_soundstream.state_dict()
 
         for key, _ in self.multiscale_discriminator_iter():
             discr_optim = getattr(self, key)
@@ -254,11 +273,25 @@ class SoundStreamTrainer(nn.Module):
     def load(self, path):
         path = Path(path)
         assert path.exists()
-        pkg = torch.load(str(path))
+        pkg = torch.load(str(path), map_location = 'cpu')
+
+        # if loading from old version, make a hacky guess
+
+        if len(pkg.keys()) > 20:
+            self.unwrapped_soundstream.load_state_dict(pkg)
+
+            if self.use_ema:
+                self.ema_soundstream.ema_model.load_state_dict(pkg)
+            return
+
+        # otherwise load things normally
 
         self.unwrapped_soundstream.load_state_dict(pkg['model'])
 
-        self.ema_soundstream.load_state_dict(pkg['ema_model'])
+        if self.use_ema:
+            assert 'ema_model' in pkg
+            self.ema_soundstream.load_state_dict(pkg['ema_model'])
+
         self.optim.load_state_dict(pkg['optim'])
         self.discr_optim.load_state_dict(pkg['discr_optim'])
 
@@ -302,7 +335,8 @@ class SoundStreamTrainer(nn.Module):
         device = self.device
 
         steps = int(self.steps.item())
-        apply_grad_penalty = not (steps % self.apply_grad_penalty_every)
+        apply_grad_penalty = self.apply_grad_penalty_every > 0 and not (steps % self.apply_grad_penalty_every)
+        log_losses = self.log_losses_every > 0 and not (steps % self.log_losses_every)
 
         self.soundstream.train()
 
@@ -316,15 +350,22 @@ class SoundStreamTrainer(nn.Module):
             wave, = next(self.dl_iter)
             wave = wave.to(device)
 
-            loss, (recon_loss, multi_spectral_recon_loss, *_) = self.soundstream(wave, return_loss_breakdown = True)
+            loss, (recon_loss, multi_spectral_recon_loss, adversarial_loss, feature_loss, all_commitment_loss) = self.soundstream(wave, return_loss_breakdown = True)
 
             self.accelerator.backward(loss / self.grad_accum_every)
 
             accum_log(logs, dict(
                 loss = loss.item() / self.grad_accum_every,
                 recon_loss = recon_loss.item() / self.grad_accum_every,
-                multi_spectral_recon_loss = multi_spectral_recon_loss.item() / self.grad_accum_every
             ))
+
+            if log_losses:
+                accum_log(logs, dict(
+                    multi_spectral_recon_loss = multi_spectral_recon_loss.item() / self.grad_accum_every,
+                    adversarial_loss = adversarial_loss.item() / self.grad_accum_every,
+                    feature_loss = feature_loss.item() / self.grad_accum_every,
+                    all_commitment_loss = all_commitment_loss.item() / self.grad_accum_every,
+                ))
 
         if exists(self.max_grad_norm):
             self.accelerator.clip_grad_norm_(self.soundstream.parameters(), self.max_grad_norm)
@@ -367,7 +408,16 @@ class SoundStreamTrainer(nn.Module):
         # build pretty printed losses
 
         losses_str = f"{steps}: soundstream total loss: {logs['loss']:.3f}, soundstream recon loss: {logs['recon_loss']:.3f}"
-        self.accelerator.log({"total_loss": logs['loss'], "recon_loss": logs['recon_loss']}, step=steps)
+        if log_losses:
+            self.accelerator.log({
+                "total_loss": logs['loss'],
+                "recon_loss": logs['recon_loss'],
+                "multi_spectral_recon_loss": logs['multi_spectral_recon_loss'],
+                "adversarial_loss": logs['adversarial_loss'],
+                "feature_loss": logs['feature_loss'],
+                "all_commitment_loss": logs['all_commitment_loss'],
+                "stft_discr_loss": logs['stft']
+            }, step=steps)
 
         for key, loss in logs.items():
             if not key.startswith('scale:'):
@@ -375,7 +425,8 @@ class SoundStreamTrainer(nn.Module):
             _, scale_factor = key.split(':')
 
             losses_str += f" | discr (scale {scale_factor}) loss: {loss:.3f}"
-            self.accelerator.log({f"discr_loss (scale {scale_factor})": loss}, step=steps)
+            if log_losses:
+                self.accelerator.log({f"discr_loss (scale {scale_factor})": loss}, step=steps)
 
         # log
 
@@ -385,7 +436,7 @@ class SoundStreamTrainer(nn.Module):
 
         self.accelerator.wait_for_everyone()
 
-        if self.is_main:
+        if self.is_main and self.use_ema:
             self.ema_soundstream.update()
 
         # sample results every so often
@@ -393,19 +444,21 @@ class SoundStreamTrainer(nn.Module):
         self.accelerator.wait_for_everyone()
 
         if self.is_main and not (steps % self.save_results_every):
-            for model, filename in ((self.ema_soundstream.ema_model, f'{steps}.ema'), (self.unwrapped_soundstream, str(steps))):
-                model.eval()
+            models = [(self.unwrapped_soundstream, str(steps))]
+            if self.use_ema:
+                models.append((self.ema_soundstream.ema_model if self.use_ema else self.unwrapped_soundstream, f'{steps}.ema'))
 
-                wave, = next(self.valid_dl_iter)
-                wave = wave.to(device)
+            wave, = next(self.valid_dl_iter)
+            wave = wave.to(device)
+
+            for model, label in models:
+                model.eval()
 
                 with torch.no_grad():
                     recons = model(wave, return_recons_only = True)
 
-                milestone = steps // self.save_results_every
-
                 for ind, recon in enumerate(recons.unbind(dim = 0)):
-                    filename = str(self.results_folder / f'sample_{steps}.flac')
+                    filename = str(self.results_folder / f'sample_{label}.flac')
                     torchaudio.save(filename, recon.cpu().detach(), self.unwrapped_soundstream.target_sample_hz)
 
             self.print(f'{steps}: saving to {str(self.results_folder)}')
@@ -445,6 +498,7 @@ class SemanticTransformerTrainer(nn.Module):
         audio_conditioner: Optional[AudioConditionerBase] = None,
         dataset: Optional[Dataset] = None,
         data_max_length = None,
+        data_max_length_seconds = None,
         folder = None,
         lr = 3e-4,
         grad_accum_every = 1,
@@ -490,6 +544,11 @@ class SemanticTransformerTrainer(nn.Module):
         self.ds = dataset
         if not exists(self.ds):
             assert exists(folder), 'folder must be passed in, if not passing in a custom dataset for text conditioned audio synthesis training'
+
+            assert not (exists(data_max_length) and exists(data_max_length_seconds))
+
+            if exists(data_max_length_seconds):
+                data_max_length = data_max_length_seconds * wav2vec.target_sample_hz
 
             self.ds = SoundDataset(
                 folder,
@@ -559,7 +618,7 @@ class SemanticTransformerTrainer(nn.Module):
     def load(self, path):
         path = Path(path)
         assert path.exists()
-        pkg = torch.load(str(path))
+        pkg = torch.load(str(path), map_location = 'cpu')
 
         transformer = self.accelerator.unwrap_model(self.transformer)
         transformer.load_state_dict(pkg['model'])
@@ -674,6 +733,7 @@ class CoarseTransformerTrainer(nn.Module):
         dataset: Optional[Dataset] = None,
         ds_fields: Tuple[str, ...] = ('raw_wave', 'raw_wave_for_soundstream', 'text'),
         data_max_length = None,
+        data_max_length_seconds = None,
         folder = None,
         lr = 3e-4,
         grad_accum_every = 1,
@@ -722,6 +782,11 @@ class CoarseTransformerTrainer(nn.Module):
 
         if not exists(self.ds):
             assert exists(folder), 'folder must be passed in, if not passing in a custom dataset for text conditioned audio synthesis training'
+
+            assert not (exists(data_max_length) and exists(data_max_length_seconds))
+
+            if exists(data_max_length_seconds):
+                data_max_length = tuple(data_max_length_seconds * hz for hz in (wav2vec.target_sample_hz, soundstream.target_sample_hz))
 
             self.ds = SoundDataset(
                 folder,
@@ -796,7 +861,7 @@ class CoarseTransformerTrainer(nn.Module):
     def load(self, path):
         path = Path(path)
         assert path.exists()
-        pkg = torch.load(str(path))
+        pkg = torch.load(str(path), map_location = 'cpu')
 
         transformer = self.accelerator.unwrap_model(self.transformer)
         transformer.load_state_dict(pkg['model'])
@@ -910,6 +975,7 @@ class FineTransformerTrainer(nn.Module):
         audio_conditioner: Optional[AudioConditionerBase] = None,
         dataset: Optional[Dataset] = None,
         data_max_length = None,
+        data_max_length_seconds = None,
         dataset_normalize = False,
         folder = None,
         lr = 3e-4,
@@ -957,6 +1023,11 @@ class FineTransformerTrainer(nn.Module):
 
         if not exists(self.ds):
             assert exists(folder), 'folder must be passed in, if not passing in a custom dataset for text conditioned audio synthesis training'
+
+            assert not (exists(data_max_length) and exists(data_max_length_seconds))
+
+            if exists(data_max_length_seconds):
+                data_max_length = data_max_length_seconds * soundstream.target_sample_hz
 
             self.ds = SoundDataset(
                 folder,
@@ -1028,7 +1099,7 @@ class FineTransformerTrainer(nn.Module):
     def load(self, path):
         path = Path(path)
         assert path.exists()
-        pkg = torch.load(str(path))
+        pkg = torch.load(str(path), map_location = 'cpu')
 
         transformer = self.accelerator.unwrap_model(self.transformer)
         transformer.load_state_dict(pkg['model'])

@@ -13,7 +13,7 @@ from torch.linalg import vector_norm
 
 import torchaudio.transforms as T
 
-from einops import rearrange, reduce
+from einops import rearrange, reduce, pack, unpack
 
 from vector_quantize_pytorch import ResidualVQ
 
@@ -343,7 +343,7 @@ class SoundStream(nn.Module):
         self,
         *,
         channels = 32,
-        strides = (2, 4, 5, 8),
+        strides = (3, 4, 5, 8),
         channel_mults = (2, 4, 8, 16),
         codebook_dim = 512,
         codebook_size = 1024,
@@ -444,6 +444,8 @@ class SoundStream(nn.Module):
 
         self.discr_multi_scales = discr_multi_scales
         self.discriminators = nn.ModuleList([MultiScaleDiscriminator() for _ in range(len(discr_multi_scales))])
+        discr_rel_factors = [int(s1 / s2) for s1, s2 in zip(discr_multi_scales[:-1], discr_multi_scales[1:])]
+        self.downsamples = nn.ModuleList([nn.Identity()] + [nn.AvgPool1d(2 * factor, stride = factor, padding = factor) for factor in discr_rel_factors])
 
         self.stft_discriminator = ComplexSTFTDiscriminator(
             stft_normalized = stft_normalized
@@ -489,21 +491,33 @@ class SoundStream(nn.Module):
         codes = self.rq.get_codes_from_indices(quantized_indices)
         x = reduce(codes, 'q ... -> ...', 'sum')
 
-        x = self.decoder_attn(x) + x
+        x = self.decoder_attn(x)
         x = rearrange(x, 'b n c -> b c n')
         return self.decoder(x)
+
+    def save(self, path):
+        path = Path(path)
+        torch.save(self.state_dict(), str(path))
 
     def load(self, path):
         path = Path(path)
         assert path.exists()
-        self.load_state_dict(torch.load(str(path)))
+        pkg = torch.load(str(path))
 
-    def load_from_trainer_saved_obj(self, path, ema = False):
-        key = 'ema_model' if ema else 'model'
+        # some hacky logic to remove confusion around loading trainer vs main model
+
+        maybe_trainer_pkg = len(pkg.keys()) < 15
+        if maybe_trainer_pkg:
+            self.load_from_trainer_saved_obj(str(path))
+            return
+
+        self.load_state_dict()
+
+    def load_from_trainer_saved_obj(self, path):
         path = Path(path)
         assert path.exists()
-        trainer_obj = torch.load(str(path))
-        self.load_state_dict(trainer_obj[key])
+        obj = torch.load(str(path))
+        self.load_state_dict(obj['model'])
 
     def non_discr_parameters(self):
         return [
@@ -528,6 +542,8 @@ class SoundStream(nn.Module):
         input_sample_hz = None,
         apply_grad_penalty = False
     ):
+        x, ps = pack([x], '* n')
+
         if exists(input_sample_hz):
             x = resample(x, input_sample_hz, self.target_sample_hz)
 
@@ -558,6 +574,7 @@ class SoundStream(nn.Module):
         recon_x = self.decoder(x)
 
         if return_recons_only:
+            recon_x, = unpack(recon_x, ps, '* c n')
             return recon_x
 
         # multi-scale discriminator loss
@@ -578,14 +595,16 @@ class SoundStream(nn.Module):
                 if apply_grad_penalty:
                     stft_grad_penalty = gradient_penalty(real, stft_discr_loss)
 
-            for discr, scale in zip(self.discriminators, self.discr_multi_scales):
-                scaled_real, scaled_fake = map(lambda t: F.interpolate(t, scale_factor = scale), (real, fake))
+            scaled_real, scaled_fake = real, fake
+            for discr, downsample in zip(self.discriminators, self.downsamples):
+                scaled_real, scaled_fake = map(downsample, (scaled_real, scaled_fake))
 
                 real_logits, fake_logits = map(discr, (scaled_real.requires_grad_(), scaled_fake))
                 one_discr_loss = hinge_discr_loss(fake_logits, real_logits)
 
                 discr_losses.append(one_discr_loss)
-                discr_grad_penalties.append(gradient_penalty(scaled_real, one_discr_loss))
+                if apply_grad_penalty:
+                    discr_grad_penalties.append(gradient_penalty(scaled_real, one_discr_loss))
 
             if not return_discr_losses_separately:
                 all_discr_losses = torch.stack(discr_losses).mean()
@@ -647,8 +666,10 @@ class SoundStream(nn.Module):
         (stft_real_logits, stft_real_intermediates), (stft_fake_logits, stft_fake_intermediates) = map(partial(self.stft_discriminator, return_intermediates=True), (real, fake))
         discr_intermediates.append((stft_real_intermediates, stft_fake_intermediates))
 
-        for discr, scale in zip(self.discriminators, self.discr_multi_scales):
-            scaled_real, scaled_fake = map(lambda t: F.interpolate(t, scale_factor = scale), (real, fake))
+        scaled_real, scaled_fake = real, fake
+        for discr, downsample in zip(self.discriminators, self.downsamples):
+            scaled_real, scaled_fake = map(downsample, (scaled_real, scaled_fake))
+
             (real_logits, real_intermediates), (fake_logits, fake_intermediates) = map(partial(discr, return_intermediates = True), (scaled_real, scaled_fake))
 
             discr_intermediates.append((real_intermediates, fake_intermediates))

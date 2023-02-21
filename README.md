@@ -28,6 +28,8 @@ In the future, <a href="https://www.youtube.com/watch?v=olNvmUCmY8o">this movie 
 
 - <a href="https://github.com/zhvng">Allen</a> for catching and fixing some bugs!
 
+- <a href="https://github.com/ilya16">Ilya</a> for finding an issue with multi-scale discriminator downsampling and for soundstream trainer improvements
+
 - <a href="https://github.com/AndreyBocharnikov">Andrey</a> for identifying a missing loss in soundstream and guiding me through the proper mel spectrogram hyperparameters
 
 ## Install
@@ -55,11 +57,16 @@ trainer = SoundStreamTrainer(
     folder = '/path/to/audio/files',
     batch_size = 4,
     grad_accum_every = 8,         # effective batch size of 32
-    data_max_length = 320 * 32,
+    data_max_length_seconds = 2,  # train on 2 second audio
     num_train_steps = 10000
 ).cuda()
 
 trainer.train()
+
+# after a lot of training, you can test the autoencoding as so
+
+audio = torch.randn(10080).cuda()
+recons = soundstream(audio, return_recons_only = True) # (1, 10080) - 1 channel
 ```
 
 Then three separate transformers (`SemanticTransformer`, `CoarseTransformer`, `FineTransformer`) need to be trained
