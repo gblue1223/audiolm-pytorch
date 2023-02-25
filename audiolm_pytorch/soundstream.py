@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from torch.linalg import vector_norm
 
 import torchaudio.transforms as T
+from torchaudio.functional import resample
 
 from einops import rearrange, reduce, pack, unpack
 
@@ -23,6 +24,12 @@ from local_attention.transformer import FeedForward
 from mega_pytorch import MultiHeadedEMA
 from audiolm_pytorch.utils import curtail_to_multiple
 
+from audiolm_pytorch.version import __version__
+from packaging import version
+parsed_version = version.parse(__version__)
+
+import pickle
+
 # helper functions
 
 def exists(val):
@@ -33,6 +40,12 @@ def default(val, d):
 
 def cast_tuple(t, l = 1):
     return ((t,) * l) if not isinstance(t, tuple) else t
+
+def filter_by_keys(fn, d):
+    return {k: v for k, v in d.items() if fn(k)}
+
+def map_keys(fn, d):
+    return {fn(k): v for k, v in d.items()}
 
 # gan losses
 
@@ -343,7 +356,7 @@ class SoundStream(nn.Module):
         self,
         *,
         channels = 32,
-        strides = (3, 4, 5, 8),
+        strides = (2, 4, 5, 8),
         channel_mults = (2, 4, 8, 16),
         codebook_dim = 512,
         codebook_size = 1024,
@@ -363,7 +376,7 @@ class SoundStream(nn.Module):
         adversarial_loss_weight = 1.,
         feature_loss_weight = 100,
         quantize_dropout_cutoff_index = 1,
-        target_sample_hz = 24000,
+        target_sample_hz = 16000,
         use_local_attn = True,
         use_mhesa = True,
         mhesa_heads = 4,
@@ -374,6 +387,16 @@ class SoundStream(nn.Module):
         attn_depth = 1
     ):
         super().__init__()
+
+        # for autosaving the config
+
+        _locals = locals()
+        _locals.pop('self', None)
+        _locals.pop('__class__', None)
+        self._configs = pickle.dumps(_locals)
+
+        # rest of the class
+
         self.target_sample_hz = target_sample_hz # for resampling on the fly
 
         self.single_channel = input_channels == 1
@@ -497,21 +520,45 @@ class SoundStream(nn.Module):
 
     def save(self, path):
         path = Path(path)
-        torch.save(self.state_dict(), str(path))
+        pkg = dict(
+            model = self.state_dict(),
+            config = self._configs,
+            version = __version__
+        )
 
-    def load(self, path):
+        torch.save(pkg, str(path))
+
+    @classmethod
+    def init_and_load_from(cls, path, strict = True):
         path = Path(path)
         assert path.exists()
-        pkg = torch.load(str(path))
+        pkg = torch.load(str(path), map_location = 'cpu')
 
-        # some hacky logic to remove confusion around loading trainer vs main model
+        assert 'config' in pkg, 'model configs were not found in this saved checkpoint'
 
-        maybe_trainer_pkg = len(pkg.keys()) < 15
-        if maybe_trainer_pkg:
-            self.load_from_trainer_saved_obj(str(path))
-            return
+        config = pickle.loads(pkg['config'])
+        soundstream = cls(**config)
+        soundstream.load(path, strict = strict)
+        return soundstream
 
-        self.load_state_dict()
+    def load(self, path, strict = True):
+        path = Path(path)
+        assert path.exists()
+        pkg = torch.load(str(path), map_location = 'cpu')
+
+        # check version
+
+        if 'version' in pkg and version.parse(pkg['version']) < parsed_version:
+            print(f'soundstream model being loaded was trained on an older version of audiolm-pytorch ({pkg["version"]})')
+
+        has_ema = 'ema_model' in pkg
+        model_pkg = pkg['ema_model'] if has_ema else pkg['model']
+
+        if has_ema:
+            model_pkg = filter_by_keys(lambda k: k.startswith('ema_model.'), model_pkg)
+            model_pkg = map_keys(lambda k: k[len('ema_model.'):], model_pkg)
+
+        self.load_state_dict(model_pkg, strict = strict)
 
     def load_from_trainer_saved_obj(self, path):
         path = Path(path)
@@ -700,3 +747,31 @@ class SoundStream(nn.Module):
             return total_loss, (recon_loss, multi_spectral_recon_loss, adversarial_loss, feature_loss, all_commitment_loss)
 
         return total_loss
+
+# some default soundstreams
+
+def AudioLMSoundStream(
+    strides = (2, 4, 5, 8),
+    target_sample_hz = 16000,
+    rq_num_quantizers = 12,
+    **kwargs
+):
+    return SoundStream(
+        strides = strides,
+        target_sample_hz = target_sample_hz,
+        rq_num_quantizers = rq_num_quantizers,
+        **kwargs
+    )
+
+def MusicLMSoundStream(
+    strides = (3, 4, 5, 8),
+    target_sample_hz = 24000,
+    rq_num_quantizers = 12,
+    **kwargs
+):
+    return SoundStream(
+        strides = strides,
+        target_sample_hz = target_sample_hz,
+        rq_num_quantizers = rq_num_quantizers,
+        **kwargs
+    )
