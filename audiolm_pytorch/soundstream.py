@@ -21,7 +21,6 @@ from vector_quantize_pytorch import ResidualVQ
 from local_attention import LocalMHA
 from local_attention.transformer import FeedForward
 
-from mega_pytorch import MultiHeadedEMA
 from audiolm_pytorch.utils import curtail_to_multiple
 
 from audiolm_pytorch.version import __version__
@@ -343,7 +342,7 @@ class LocalTransformerBlock(nn.Module):
         **kwargs
     ):
         super().__init__()
-        self.attn = LocalMHA(dim = dim, qk_rmsnorm = True, **kwargs)
+        self.attn = LocalMHA(dim = dim, qk_rmsnorm = True, use_xpos = True, **kwargs)
         self.ff = FeedForward(dim = dim)
 
     def forward(self, x):
@@ -378,9 +377,6 @@ class SoundStream(nn.Module):
         quantize_dropout_cutoff_index = 1,
         target_sample_hz = 16000,
         use_local_attn = True,
-        use_mhesa = True,
-        mhesa_heads = 4,
-        mhesa_dim_head = 32,
         attn_window_size = 128,
         attn_dim_head = 64,
         attn_heads = 8,
@@ -410,11 +406,6 @@ class SoundStream(nn.Module):
 
         for ((chan_in, chan_out), layer_stride) in zip(chan_in_out_pairs, strides):
             encoder_blocks.append(EncoderBlock(chan_in, chan_out, layer_stride, enc_cycle_dilations))
-
-            if not use_mhesa:
-                continue
-
-            encoder_blocks.append(MultiHeadEMABlock(chan_out, dim_head = mhesa_dim_head, heads = mhesa_heads))
 
         self.encoder = nn.Sequential(
             CausalConv1d(input_channels, channels, 7),
@@ -451,11 +442,6 @@ class SoundStream(nn.Module):
 
         for ((chan_in, chan_out), layer_stride) in zip(reversed(chan_in_out_pairs), reversed(strides)):
             decoder_blocks.append(DecoderBlock(chan_out, chan_in, layer_stride, dec_cycle_dilations))
-
-            if not use_mhesa:
-                continue
-
-            decoder_blocks.append(MultiHeadEMABlock(chan_in, dim_head = mhesa_dim_head, heads = mhesa_heads))
 
         self.decoder = nn.Sequential(
             CausalConv1d(codebook_dim, layer_channels[-1], 7),
@@ -509,6 +495,10 @@ class SoundStream(nn.Module):
         self.multi_spectral_recon_loss_weight = multi_spectral_recon_loss_weight
         self.adversarial_loss_weight = adversarial_loss_weight
         self.feature_loss_weight = feature_loss_weight
+
+    @property
+    def configs(self):
+        return pickle.loads(self._configs)
 
     def decode_from_codebook_indices(self, quantized_indices):
         codes = self.rq.get_codes_from_indices(quantized_indices)
