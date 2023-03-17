@@ -26,14 +26,14 @@ setup(
     'fairseq',
     'joblib',
     'lion-pytorch',
-    'local-attention>=1.7.0',
+    'local-attention>=1.8.4',
     'scikit-learn',
     'sentencepiece',
     'torch>=1.12',
     'torchaudio',
     'transformers',
     'tqdm',
-    'vector-quantize-pytorch>=0.10.15'
+    'vector-quantize-pytorch>=1.0.6'
   ],
   classifiers=[
     'Development Status :: 4 - Beta',
